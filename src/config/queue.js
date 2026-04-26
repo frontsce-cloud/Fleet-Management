@@ -48,4 +48,10 @@ alertQueue.on('error', (err) => {
 notificationQueue.on('error', (err) => {
   console.error('Notification Queue error:', err);
 });
+
+module.exports = {
+  gpsQueue,
+  alertQueue,
+  notificationQueue,
+};
 module.exports = { gpsQueue, alertQueue, notificationQueue, };
