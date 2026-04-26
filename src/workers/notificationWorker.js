@@ -2,6 +2,7 @@ const { Worker } = require('bullmq');
 const nodemailer = require('nodemailer');
 const logger = require('../utils/logger');
 const config = require('../config');
+const redis = require('../config/redis');
 
 // Create transporter if SMTP is configured
 let transporter = null;
@@ -17,45 +18,56 @@ if (config.SMTP_HOST && config.SMTP_USER) {
   });
 }
 
-// Notification Worker
-const notificationWorker = new Worker('notifications', async (job) => {
-  const { vehicle_id, type, message, severity } = job.data;
+// Notification Worker - only initialize if Redis is available
+let notificationWorker = null;
 
+if (!redis || redis.status === 'connecting' || !redis.connected) {
+  // Redis not available, skip worker initialization
+  console.log('Redis not available, skipping Notification worker initialization');
+} else {
   try {
-    logger.info('Sending notification', { vehicle_id, type, severity });
+    notificationWorker = new Worker('notifications', async (job) => {
+      const { vehicle_id, type, message, severity } = job.data;
 
-    if (transporter) {
-      // Send email
-      const mailOptions = {
-        from: config.SMTP_FROM,
-        to: 'admin@fleetmanagement.com', // TODO: Get actual email from user or config
-        subject: `Fleet Alert: ${type.toUpperCase()} - Vehicle ${vehicle_id}`,
-        text: message,
-        html: `<p><strong>Alert Type:</strong> ${type}</p>
-               <p><strong>Vehicle ID:</strong> ${vehicle_id}</p>
-               <p><strong>Severity:</strong> ${severity}</p>
-               <p><strong>Message:</strong> ${message}</p>`,
-      };
+      try {
+        logger.info('Sending notification', { vehicle_id, type, severity });
 
-      await transporter.sendMail(mailOptions);
-      logger.info('Email notification sent successfully', { vehicle_id, type });
-    } else {
-      logger.warn('SMTP not configured, skipping email notification', { vehicle_id, type });
-    }
+        if (transporter) {
+          // Send email
+          const mailOptions = {
+            from: config.SMTP_FROM,
+            to: 'admin@fleetmanagement.com', // TODO: Get actual email from user or config
+            subject: `Fleet Alert: ${type.toUpperCase()} - Vehicle ${vehicle_id}`,
+            text: message,
+            html: `<p><strong>Alert Type:</strong> ${type}</p>
+                   <p><strong>Vehicle ID:</strong> ${vehicle_id}</p>
+                   <p><strong>Severity:</strong> ${severity}</p>
+                   <p><strong>Message:</strong> ${message}</p>`,
+          };
+
+          await transporter.sendMail(mailOptions);
+          logger.info('Email notification sent successfully', { vehicle_id, type });
+        } else {
+          logger.warn('SMTP not configured, skipping email notification', { vehicle_id, type });
+        }
+      } catch (error) {
+        logger.error('Error sending notification', { error: error.message, vehicle_id });
+        throw error;
+      }
+    }, {
+      connection: redis
+    });
+
+    notificationWorker.on('completed', (job) => {
+      logger.info('Notification job completed', { jobId: job.id });
+    });
+
+    notificationWorker.on('failed', (job, err) => {
+      logger.error('Notification job failed', { jobId: job.id, error: err.message });
+    });
   } catch (error) {
-    logger.error('Error sending notification', { error: error.message, vehicle_id });
-    throw error;
+    console.error('Failed to initialize Notification worker:', error.message);
   }
-}, {
-  connection: require('../config/redis')
-});
-
-notificationWorker.on('completed', (job) => {
-  logger.info('Notification job completed', { jobId: job.id });
-});
-
-notificationWorker.on('failed', (job, err) => {
-  logger.error('Notification job failed', { jobId: job.id, error: err.message });
-});
+}
 
 module.exports = notificationWorker;

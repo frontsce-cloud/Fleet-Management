@@ -3,11 +3,17 @@ const { server, wsManager } = require('./app');
 const config = require('./config');
 const { createTables } = require('./utils/setupDb');
 const logger = require('./utils/logger');
+const redis = require('./config/redis');
 
-// Start workers
-require('./workers/gpsWorker');
-require('./workers/alertWorker');
-require('./workers/notificationWorker');
+// Start workers only if Redis is available
+if (redis && redis.status !== 'connecting' && redis.connected) {
+  require('./workers/gpsWorker');
+  require('./workers/alertWorker');
+  require('./workers/notificationWorker');
+  console.log('Workers initialized successfully');
+} else {
+  console.log('Redis not available, skipping worker initialization');
+}
 
 // Make wsManager available globally for workers
 global.wsManager = wsManager;
